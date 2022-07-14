@@ -1,5 +1,7 @@
 package com.zver.meowzverbot;
 
+import com.zver.meowzverbot.entities.Currency;
+import com.zver.meowzverbot.service.CurrencyModeService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -9,19 +11,24 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendSticker;
-import org.telegram.telegrambots.meta.api.objects.InputFile;
-import org.telegram.telegrambots.meta.api.objects.Message;
-import org.telegram.telegrambots.meta.api.objects.MessageEntity;
-import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
+import org.telegram.telegrambots.meta.api.objects.*;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.stickers.Sticker;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
-import java.util.Random;
+
 
 @Component
 @RequiredArgsConstructor
 public class Meow extends TelegramLongPollingBot {
+
+    private final CurrencyModeService currencyModeService = CurrencyModeService.getInstance();
 
     @Override
     public String getBotUsername() {
@@ -37,7 +44,9 @@ public class Meow extends TelegramLongPollingBot {
     @SneakyThrows
     public void onUpdateReceived(Update update) {
         Message message = update.getMessage();
-        if (message.hasText() && message.hasEntities()) {
+        if (update.hasCallbackQuery()) {
+            handleCallback(update.getCallbackQuery());}
+        else if (message.hasText() && message.hasEntities()) {
             handleMessage(message);
         } else if (update.hasMessage() && message.hasText()) {
             execute(SendMessage.builder().chatId(message.getChatId().toString()).text("Good").build());
@@ -49,12 +58,66 @@ public class Meow extends TelegramLongPollingBot {
     }
 
     @SneakyThrows
+    private void handleCallback(CallbackQuery callbackQuery) {
+        Message message = callbackQuery.getMessage();
+        System.out.println(message);
+        String[] param = callbackQuery.getData().split(":");
+        String action = param[0];
+        System.out.println(action);
+        Currency newCurrency = Currency.valueOf(param[1]);
+        System.out.println(newCurrency);
+        switch (action) {
+            case "ORIGINAL":
+                currencyModeService.setOriginalCurrency(message.getChatId(), newCurrency);
+                break;
+            case "TARGET":
+                currencyModeService.setTargetCurrency(message.getChatId(), newCurrency);
+                break;
+        }
+        List<List<InlineKeyboardButton>> buttons = new ArrayList<>();
+        Currency originalCurrency = currencyModeService.getOriginalCurrency(message.getChatId());
+        Currency targetCurrency = currencyModeService.getTargetCurrency(message.getChatId());
+        for (Currency currency : Currency.values()) {
+            buttons.add(
+                    Arrays.asList(
+                            InlineKeyboardButton.builder()
+                                    .text(getCurrencyButton(originalCurrency, currency))
+                                    .callbackData("ORIGINAL:" + currency)
+                                    .build(),
+                            InlineKeyboardButton.builder()
+                                    .text(getCurrencyButton(targetCurrency, currency))
+                                    .callbackData("TARGET:" + currency)
+                                    .build()));
+        }
+        execute(
+                EditMessageReplyMarkup.builder()
+                        .chatId(message.getChatId().toString())
+                        .messageId(message.getMessageId())
+                        .replyMarkup(InlineKeyboardMarkup.builder().keyboard(buttons).build())
+                        .build());
+    }
+
+
+    @SneakyThrows
     private void handleMessage(Message message) {
-        Optional<MessageEntity> commandEntity = message.getEntities().stream().filter(e -> "bot_command".equals(e.getType())).findFirst();
-        if (commandEntity.isPresent()) {
-            String command = message.getText().substring(commandEntity.get().getOffset(), commandEntity.get().getLength());
-            if ("/set_currency".equals(command)) {
-                execute(SendMessage.builder().chatId(message.getChatId().toString()).text("Good query!!!").build());
+        if (message.hasText() && message.hasEntities()) {
+            Optional<MessageEntity> commandEntity = message.getEntities().stream().filter(e -> "bot_command".equals(e.getType())).findFirst();
+            if (commandEntity.isPresent()) {
+                String command = message.getText().substring(commandEntity.get().getOffset(), commandEntity.get().getLength());
+                if ("/set_currency".equals(command)) {
+                    List<List<InlineKeyboardButton>> buttons = new ArrayList<>();
+                    for (Currency currency : Currency.values()) {
+                        buttons.add(Arrays.asList(
+                                InlineKeyboardButton.builder().text(currency.name()).callbackData("ORIGINAL:" + currency).build(),
+                                InlineKeyboardButton.builder().text(currency.name()).callbackData("TARGET:" + currency).build()));
+                    }
+                    execute(SendMessage.builder()
+                            .text("Please choose: ")
+                            .chatId(message.getChatId().toString())
+                            .replyMarkup(InlineKeyboardMarkup.builder()
+                                    .keyboard(buttons)
+                                    .build()).build());
+                }
             }
         }
     }
@@ -65,5 +128,9 @@ public class Meow extends TelegramLongPollingBot {
         Meow meow = new Meow();
         TelegramBotsApi telegramBotsApi = new TelegramBotsApi(DefaultBotSession.class);
         telegramBotsApi.registerBot(meow);
+    }
+
+    private String getCurrencyButton(Currency saved, Currency current) {
+        return saved == current ? current + " ✅" : current.name();
     }
 }
