@@ -1,6 +1,7 @@
 package com.zver.meowzverbot;
 
 import com.zver.meowzverbot.entities.Currency;
+import com.zver.meowzverbot.service.CurrencyConversionService;
 import com.zver.meowzverbot.service.CurrencyModeService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
@@ -29,6 +30,8 @@ import java.util.Optional;
 public class Meow extends TelegramLongPollingBot {
 
     private final CurrencyModeService currencyModeService = CurrencyModeService.getInstance();
+    private final CurrencyConversionService currencyConversionService =
+            CurrencyConversionService.getInstance();
 
     @Override
     public String getBotUsername() {
@@ -45,8 +48,8 @@ public class Meow extends TelegramLongPollingBot {
     public void onUpdateReceived(Update update) {
         Message message = update.getMessage();
         if (update.hasCallbackQuery()) {
-            handleCallback(update.getCallbackQuery());}
-        else if (message.hasText() && message.hasEntities()) {
+            handleCallback(update.getCallbackQuery());
+        } else if (message.hasText() && message.hasEntities()) {
             handleMessage(message);
         } else if (update.hasMessage() && message.hasText()) {
             execute(SendMessage.builder().chatId(message.getChatId().toString()).text("Good").build());
@@ -119,6 +122,33 @@ public class Meow extends TelegramLongPollingBot {
                                     .build()).build());
                 }
             }
+        }
+        if (message.hasText()) {
+            String messageText = message.getText();
+            Optional<Double> value = parseDouble(messageText);
+            Currency originalCurrency = currencyModeService.getOriginalCurrency(message.getChatId());
+            Currency targetCurrency = currencyModeService.getTargetCurrency(message.getChatId());
+            double ratio = currencyConversionService.getConversionRatio(originalCurrency, targetCurrency);
+
+            if (value.isPresent()) {
+                execute(
+                        SendMessage.builder()
+                                .chatId(message.getChatId().toString())
+                                .text(
+                                        String.format(
+                                                "%4.2f %s is %4.2f %s",
+                                                value.get(), originalCurrency, (value.get() * ratio), targetCurrency))
+                                .build());
+                return;
+            }
+        }
+    }
+
+    private Optional<Double> parseDouble(String messageText) {
+        try {
+            return Optional.of(Double.parseDouble(messageText));
+        } catch (Exception e) {
+            return Optional.empty();
         }
     }
 
